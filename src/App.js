@@ -1,494 +1,221 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { MessageCircle, X, Send, Minimize2, LogOut } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { BriefcaseBusiness, Target } from 'lucide-react';
+import ChatWindow from './ChatWindow';
 import './App.css';
-import { detectAndProcessIntent, getAvailableCommands } from './assistantActions';
 
-const App = () => {
-  const [activeAssistant, setActiveAssistant] = useState(null);
-  const [messages, setMessages] = useState({ lily: [], james: [] });
-  const [input, setInput] = useState('');
-  const [isMinimized, setIsMinimized] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
+function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [userInfo, setUserInfo] = useState(null);
-  const [googleAccessToken, setGoogleAccessToken] = useState(null);
-  const messagesEndRef = useRef(null);
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
-
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages, activeAssistant]);
-
-  useEffect(() => {
-    const token = localStorage.getItem('google_access_token');
-    const user = localStorage.getItem('user_info');
-    if (token && user) {
-      setGoogleAccessToken(token);
-      setUserInfo(JSON.parse(user));
-      setIsAuthenticated(true);
-    }
-  }, []);
+  const [selectedAssistant, setSelectedAssistant] = useState(null);
+  const [user, setUser] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   const assistants = {
     lily: {
       name: 'Lily',
       color: 'from-purple-600 via-pink-500 to-red-500',
       bgColor: '#17ABAE',
-      hoverColor: '#15999C',
-      greeting: '¡Hola! Soy Lily, tu asistente de negocios. \n\nEstoy aquí para ayudarte con estrategias empresariales, análisis de datos, soporte técnico y creación de dashboards en Power BI.\n\n¿En qué puedo ayudarte hoy?',
+      greeting: '¡Hola! Soy Lily, tu asistente de negocios. 💼\n\nEstoy aquí para ayudarte con estrategias empresariales, análisis de datos, soporte técnico y creación de dashboards en Power BI.\n\n¿En qué puedo ayudarte hoy?',
       systemPrompt: `Eres Lily, una asistente virtual de negocios experta en métricas y eficiencia. Eres profesional, orientada a resultados y proporcionas soluciones prácticas.`
     },
     james: {
       name: 'James',
       color: 'from-blue-600 via-cyan-500 to-teal-400',
       bgColor: '#17ABAE',
-      hoverColor: '#15999C',
-      greeting: '¡Hola! Soy James, tu asistente personal. \n\nPuedo ayudarte con la gestión de tareas, planificación de proyectos personales y organización de tu agenda.\n\n¿Qué necesitas organizar hoy?',
+      greeting: '¡Hola! Soy James, tu asistente personal. 🎯\n\nPuedo ayudarte con la gestión de tareas, planificación de proyectos personales y organización de tu agenda.\n\n¿Qué necesitas organizar hoy?',
       systemPrompt: `Eres James, un asistente virtual personal enfocado en comodidad e inmediatez. Eres amigable, organizado y ayudas al usuario a ser más productivo.`
     }
   };
 
-  const handleGoogleLogin = () => {
-    const clientId = process.env.REACT_APP_GOOGLE_CLIENT_ID;
-    const redirectUri = window.location.origin;
-    const scope = 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email';
-    
-    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=token&scope=${scope}`;
-    
-    window.location.href = authUrl;
-  };
-
   useEffect(() => {
-    const hash = window.location.hash;
-    if (hash) {
-      const params = new URLSearchParams(hash.substring(1));
-      const accessToken = params.get('access_token');
-      
-      if (accessToken) {
-        setGoogleAccessToken(accessToken);
-        localStorage.setItem('google_access_token', accessToken);
-        
-        fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
-          headers: { Authorization: `Bearer ${accessToken}` }
-        })
-          .then(res => res.json())
-          .then(user => {
-            setUserInfo(user);
-            localStorage.setItem('user_info', JSON.stringify(user));
-            setIsAuthenticated(true);
+    // Inicializar Google Sign-In
+    const initGoogleAuth = () => {
+      if (window.gapi) {
+        window.gapi.load('auth2', () => {
+          window.gapi.auth2.init({
+            client_id: process.env.REACT_APP_GOOGLE_CLIENT_ID,
+            scope: 'profile email https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/calendar.readonly'
+          }).then(() => {
+            const authInstance = window.gapi.auth2.getAuthInstance();
+            const isSignedIn = authInstance.isSignedIn.get();
+            
+            if (isSignedIn) {
+              const currentUser = authInstance.currentUser.get();
+              const profile = currentUser.getBasicProfile();
+              setUser({
+                name: profile.getName(),
+                email: profile.getEmail(),
+                imageUrl: profile.getImageUrl()
+              });
+              setIsAuthenticated(true);
+            }
+            setIsLoading(false);
+          }).catch(error => {
+            console.error('Error initializing Google Auth:', error);
+            setIsLoading(false);
           });
-        
-        window.history.replaceState(null, '', window.location.pathname);
+        });
       }
-    }
-  }, []);
-
-  const handleLogout = () => {
-    localStorage.removeItem('google_access_token');
-    localStorage.removeItem('user_info');
-    setGoogleAccessToken(null);
-    setUserInfo(null);
-    setIsAuthenticated(false);
-    setActiveAssistant(null);
-    setMessages({ lily: [], james: [] });
-  };
-
-  const initializeChat = (assistant) => {
-    if (messages[assistant].length === 0) {
-      const commands = getAvailableCommands(assistant);
-      const welcomeMessage = assistants[assistant].greeting + 
-        `\n\n💡 **${commands.message}**\n\n` +
-        `**Google Drive:**\n${commands.drive.join('\n')}\n\n` +
-        `**Google Calendar:**\n${commands.calendar.join('\n')}`;
-      
-      setMessages(prev => ({
-        ...prev,
-        [assistant]: [{
-          type: 'assistant',
-          content: welcomeMessage,
-          timestamp: new Date()
-        }]
-      }));
-    }
-  };
-
-  const handleSendMessage = async () => {
-    if (!input.trim() || !activeAssistant || isLoading) return;
-
-    const userMessage = {
-      type: 'user',
-      content: input,
-      timestamp: new Date()
     };
 
-    setMessages(prev => ({
-      ...prev,
-      [activeAssistant]: [...prev[activeAssistant], userMessage]
-    }));
+    // Cargar el script de Google API
+    const script = document.createElement('script');
+    script.src = 'https://apis.google.com/js/api.js';
+    script.onload = initGoogleAuth;
+    document.body.appendChild(script);
 
-    const currentInput = input;
-    setInput('');
-    setIsLoading(true);
+    return () => {
+      document.body.removeChild(script);
+    };
+  }, []);
 
-    try {
-      if (googleAccessToken) {
-        const intentResult = await detectAndProcessIntent(currentInput, googleAccessToken);
-        
-        if (intentResult) {
-          setMessages(prev => ({
-            ...prev,
-            [activeAssistant]: [
-              ...prev[activeAssistant],
-              {
-                type: 'assistant',
-                content: intentResult.message,
-                timestamp: new Date(),
-                googleAction: true,
-                actionData: intentResult
-              }
-            ]
-          }));
-          setIsLoading(false);
-          return;
-        }
-      }
-
-      const apiKey = process.env.REACT_APP_ANTHROPIC_API_KEY;
-      
-      if (!apiKey || apiKey === 'pendiente_comprar_mañana') {
-        throw new Error('API_KEY_NOT_CONFIGURED');
-      }
-
-      const currentAssistant = assistants[activeAssistant];
-      
-      let systemPrompt = currentAssistant.systemPrompt;
-      if (isAuthenticated && userInfo) {
-        systemPrompt += `\n\nEl usuario está autenticado con Google. Nombre: ${userInfo.name}, Email: ${userInfo.email}.`;
-        
-        const commands = getAvailableCommands(activeAssistant);
-        systemPrompt += `\n\nPuedes ayudar al usuario con:\n- Buscar archivos en Google Drive\n- Gestionar eventos de Google Calendar\n\nEjemplos de comandos:\n${commands.drive.join('\n')}\n${commands.calendar.join('\n')}`;
-      }
-
-      const response = await fetch('/api/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01'
-        },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 1024,
-          system: systemPrompt,
-          messages: [
-            ...messages[activeAssistant]
-              .filter(msg => msg.type !== 'system' && !msg.googleAction)
-              .map(msg => ({
-                role: msg.type === 'user' ? 'user' : 'assistant',
-                content: msg.content
-              })),
-            { role: 'user', content: currentInput }
-          ]
-        })
+  const handleGoogleLogin = () => {
+    const authInstance = window.gapi.auth2.getAuthInstance();
+    authInstance.signIn().then(googleUser => {
+      const profile = googleUser.getBasicProfile();
+      setUser({
+        name: profile.getName(),
+        email: profile.getEmail(),
+        imageUrl: profile.getImageUrl()
       });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      const assistantResponse = data.content
-        .filter(item => item.type === 'text')
-        .map(item => item.text)
-        .join('\n');
-
-      setMessages(prev => ({
-        ...prev,
-        [activeAssistant]: [
-          ...prev[activeAssistant],
-          {
-            type: 'assistant',
-            content: assistantResponse,
-            timestamp: new Date()
-          }
-        ]
-      }));
-    } catch (error) {
-      let errorMessage = 'Lo siento, hubo un error al procesar tu mensaje. ';
-      
-      if (error.message === 'API_KEY_NOT_CONFIGURED') {
-        errorMessage += '⚠️ La API Key de Anthropic no está configurada.';
-      } else {
-        errorMessage += 'Por favor intenta de nuevo.';
-      }
-
-      setMessages(prev => ({
-        ...prev,
-        [activeAssistant]: [
-          ...prev[activeAssistant],
-          {
-            type: 'assistant',
-            content: errorMessage,
-            timestamp: new Date(),
-            error: true
-          }
-        ]
-      }));
-    } finally {
-      setIsLoading(false);
-    }
+      setIsAuthenticated(true);
+    }).catch(error => {
+      console.error('Error during sign in:', error);
+    });
   };
 
-  const openAssistant = (assistant) => {
-    setActiveAssistant(assistant);
-    setIsMinimized(false);
-    initializeChat(assistant);
+  const handleLogout = () => {
+    const authInstance = window.gapi.auth2.getAuthInstance();
+    authInstance.signOut().then(() => {
+      setIsAuthenticated(false);
+      setSelectedAssistant(null);
+      setUser(null);
+    });
   };
 
-  const closeChat = () => {
-    setActiveAssistant(null);
-    setIsMinimized(false);
-  };
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-black flex items-center justify-center">
+        <div className="text-white text-2xl">Cargando...</div>
+      </div>
+    );
+  }
 
   if (!isAuthenticated) {
     return (
-      <div className="min-h-screen bg-[#1a1d29] flex items-center justify-center p-8 relative overflow-hidden">
-        {/* Animated wave background */}
-        <div className="wave-background"></div>
-        
-        <div className="max-w-7xl w-full relative z-10">
-          {/* Header */}
-          <div className="text-left mb-16">
-            <h1 className="text-5xl font-bold text-white mb-4" style={{textShadow: '2px 2px 8px rgba(0,0,0,0.8)'}}>
-              ¡Hola! <span className="animate-wave inline-block">👋</span>
-            </h1>
-            <h2 className="text-4xl font-bold text-white mb-6" style={{textShadow: '2px 2px 8px rgba(0,0,0,0.8)'}}>
-              Soy tu <span className="text-white">Asistente Virtual</span>
-            </h2>
-            <p className="text-white text-xl max-w-3xl" style={{textShadow: '2px 2px 8px rgba(0,0,0,0.8)'}}>
-              Para empezar, elige el perfil que mejor se adapte a tus necesidades actuales.
-            </p>
-          </div>
-
-          {/* Assistant cards in row */}
-          <div className="flex gap-8 mb-16 justify-start">
-            {Object.entries(assistants).map(([key, assistant]) => (
-              <button
-                key={key}
-                onClick={handleGoogleLogin}
-                className="assistant-card group relative overflow-hidden rounded-2xl transition-all duration-500 hover:scale-105 shadow-2xl"
-                style={{ 
-                  backgroundColor: assistant.bgColor,
-                  width: '280px',
-                  height: '200px'
-                }}
-              >
-                <div className="absolute inset-0 bg-black opacity-0 group-hover:opacity-10 transition-opacity duration-300"></div>
-                <div className="relative z-10 flex items-center justify-center h-full">
-                  <h2 className="text-7xl font-bold text-white drop-shadow-lg">{assistant.name}</h2>
-                </div>
-              </button>
-            ))}
-          </div>
-
-          {/* Description text */}
-          <div className="text-left max-w-4xl">
-            <p className="text-white text-base leading-relaxed italic" style={{textShadow: '1px 1px 4px rgba(0,0,0,0.8)'}}>
-              La elección de tu asistente optimizará la forma en que gestionamos tus peticiones. 
-              Si seleccionas a <span className="font-bold">Lily</span>, las respuestas serán más enfocadas en{' '}
-              <span className="font-bold">métricas y eficiencia</span>. 
-              Si eliges a <span className="font-bold">James</span>, priorizaremos la{' '}
-              <span className="font-bold">comodidad y la inmediatez</span> en tus tareas diarias.
-            </p>
-          </div>
-        </div>
-
-        {/* Didcom logo */}
-        <div className="absolute top-8 right-8 z-20">
-          <div className="text-gray-400 text-4xl font-bold opacity-50">didcom</div>
+      <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-black flex items-center justify-center p-4">
+        <div className="bg-gray-800/50 backdrop-blur-sm p-8 rounded-2xl shadow-2xl max-w-md w-full border border-gray-700">
+          <h1 className="text-4xl font-bold text-white mb-2 text-center">
+            Lily & James
+          </h1>
+          <p className="text-gray-300 text-center mb-8">
+            Tus asistentes virtuales
+          </p>
+          <button
+            onClick={handleGoogleLogin}
+            className="w-full bg-white hover:bg-gray-100 text-gray-900 font-semibold py-3 px-6 rounded-lg flex items-center justify-center gap-3 transition-all duration-200 shadow-lg hover:shadow-xl"
+          >
+            <svg className="w-6 h-6" viewBox="0 0 24 24">
+              <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+              <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+              <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+              <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+            </svg>
+            Iniciar sesión con Google
+          </button>
         </div>
       </div>
     );
   }
 
-  if (!activeAssistant) {
+  if (selectedAssistant) {
     return (
-      <div className="min-h-screen bg-[#1a1d29] p-6 relative overflow-hidden">
-        <div className="wave-background"></div>
-        
-        <div className="max-w-6xl mx-auto relative z-10">
-          <div className="bg-gray-900/80 backdrop-blur-xl rounded-3xl shadow-xl p-6 mb-8 border border-purple-500/20">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                {userInfo?.picture ? (
-                  <img src={userInfo.picture} alt="Usuario" className="w-16 h-16 rounded-full border-4 border-purple-500 shadow-lg" />
-                ) : (
-                  <div className="w-16 h-16 rounded-full bg-gradient-to-r from-purple-500 to-pink-500 flex items-center justify-center text-white font-bold text-2xl shadow-lg">
-                    {userInfo?.name?.charAt(0) || 'U'}
-                  </div>
-                )}
-                <div>
-                  <p className="font-bold text-white text-xl">¡Hola, {userInfo?.name?.split(' ')[0] || 'Usuario'}!</p>
-                  <p className="text-sm text-gray-400">{userInfo?.email || ''}</p>
-                </div>
-              </div>
-              <button
-                onClick={handleLogout}
-                className="flex items-center gap-2 px-5 py-3 text-red-400 hover:bg-red-900/30 rounded-xl transition-all duration-300 font-semibold border border-red-500/30"
-              >
-                <LogOut size={20} />
-                Cerrar sesión
-              </button>
-            </div>
-          </div>
-
-          <div className="text-left mb-12">
-            <h1 className="text-5xl font-bold text-white mb-4" style={{textShadow: '2px 2px 8px rgba(0,0,0,0.8)'}}>
-              Soy tu <span className="text-white">Asistente Virtual</span>
-            </h1>
-            <p className="text-xl text-white" style={{textShadow: '2px 2px 8px rgba(0,0,0,0.8)'}}>
-              Para empezar, elige el perfil que mejor se adapte a tus necesidades actuales.
-            </p>
-          </div>
-
-          <div className="flex gap-8 mb-8 justify-start">
-            {Object.entries(assistants).map(([key, assistant]) => (
-              <button
-                key={key}
-                onClick={() => openAssistant(key)}
-                className="assistant-card group relative overflow-hidden rounded-2xl transition-all duration-500 hover:scale-105 shadow-2xl"
-                style={{ 
-                  backgroundColor: assistant.bgColor,
-                  width: '280px',
-                  height: '200px'
-                }}
-              >
-                <div className="absolute inset-0 bg-black opacity-0 group-hover:opacity-10 transition-opacity duration-300"></div>
-                <div className="relative z-10 flex items-center justify-center h-full">
-                  <h2 className="text-7xl font-bold text-white drop-shadow-lg">{assistant.name}</h2>
-                </div>
-              </button>
-            ))}
-          </div>
-
-          <div className="text-left max-w-4xl">
-            <p className="text-white text-base leading-relaxed italic" style={{textShadow: '1px 1px 4px rgba(0,0,0,0.8)'}}>
-              La elección de tu asistente optimizará la forma en que gestionamos tus peticiones. 
-              Si seleccionas a <span className="font-bold">Lily</span>, las respuestas serán más enfocadas en{' '}
-              <span className="font-bold">métricas y eficiencia</span>. 
-              Si eliges a <span className="font-bold">James</span>, priorizaremos la{' '}
-              <span className="font-bold">comodidad y la inmediatez</span> en tus tareas diarias.
-            </p>
-          </div>
-        </div>
-
-        <div className="absolute top-8 right-8 z-20">
-          <div className="text-gray-400 text-4xl font-bold opacity-50">didcom</div>
-        </div>
-      </div>
-    );
-  }
-
-  const currentAssistant = assistants[activeAssistant];
-
-  if (isMinimized) {
-    return (
-      <div className="fixed bottom-6 right-6 z-50">
-        <button
-          onClick={() => setIsMinimized(false)}
-          className={`bg-gradient-to-r ${currentAssistant.color} text-white rounded-full p-5 shadow-2xl hover:shadow-3xl transition-all duration-300 hover:scale-110`}
-        >
-          <MessageCircle size={28} />
-        </button>
-      </div>
+      <ChatWindow
+        assistant={assistants[selectedAssistant]}
+        onBack={() => setSelectedAssistant(null)}
+        user={user}
+        onLogout={handleLogout}
+      />
     );
   }
 
   return (
-    <div className="fixed bottom-6 right-6 w-[420px] h-[650px] bg-gray-900 rounded-3xl shadow-2xl flex flex-col z-50 overflow-hidden border-2 border-purple-500/30">
-      <div className={`bg-gradient-to-r ${currentAssistant.color} text-white p-5 flex items-center justify-between`}>
-        <div className="flex items-center gap-4">
-          <div>
-            <h3 className="font-bold text-2xl">{currentAssistant.name}</h3>
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-black p-4">
+      <div className="max-w-6xl mx-auto">
+        <div className="flex justify-between items-center mb-8 pt-4">
+          <h1 className="text-4xl font-bold text-white">
+            Elige tu Asistente Virtual
+          </h1>
+          <div className="flex items-center gap-4">
+            <img
+              src={user?.imageUrl}
+              alt={user?.name}
+              className="w-10 h-10 rounded-full border-2 border-gray-600"
+            />
+            <button
+              onClick={handleLogout}
+              className="text-gray-300 hover:text-white transition-colors"
+            >
+              Cerrar sesión
+            </button>
           </div>
         </div>
-        <div className="flex gap-2">
-          <button
-            onClick={() => setIsMinimized(true)}
-            className="hover:bg-white/20 p-2 rounded-xl transition-all duration-300"
-          >
-            <Minimize2 size={20} />
-          </button>
-          <button
-            onClick={closeChat}
-            className="hover:bg-white/20 p-2 rounded-xl transition-all duration-300"
-          >
-            <X size={20} />
-          </button>
-        </div>
-      </div>
 
-      <div className="flex-1 overflow-y-auto p-5 space-y-4 bg-gray-800">
-        {messages[activeAssistant].map((message, idx) => (
-          <div
-            key={idx}
-            className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
+        <div className="grid md:grid-cols-2 gap-8">
+          {/* Lily Card */}
+          <button
+            onClick={() => setSelectedAssistant('lily')}
+            className="group relative overflow-hidden rounded-3xl transition-all duration-300 hover:scale-105"
           >
-            <div
-              className={`max-w-[85%] rounded-2xl px-5 py-3 shadow-lg ${
-                message.type === 'user'
-                  ? `bg-gradient-to-r ${currentAssistant.color} text-white`
-                  : message.error
-                  ? 'bg-red-900/50 text-red-200'
-                  : 'bg-gray-700 text-white'
-              }`}
-            >
-              <p className="text-sm whitespace-pre-wrap">{message.content}</p>
-              <p className={`text-xs mt-2 ${message.type === 'user' ? 'text-white/70' : 'text-gray-400'}`}>
-                {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            <div className="absolute inset-0 bg-gradient-to-br from-purple-600/20 via-pink-500/20 to-red-500/20" />
+            <div className="relative p-8 backdrop-blur-sm bg-gray-800/40 border border-gray-700 hover:border-gray-600 transition-all">
+              <div 
+                className="w-32 h-32 mx-auto mb-6 rounded-2xl flex items-center justify-center text-white text-5xl font-bold shadow-2xl"
+                style={{ backgroundColor: assistants.lily.bgColor }}
+              >
+                Lily
+              </div>
+              <h2 className="text-3xl font-bold text-white mb-3 text-center">
+                Lily
+              </h2>
+              <div className="flex items-center justify-center gap-2 mb-4">
+                <BriefcaseBusiness className="w-5 h-5 text-gray-300" />
+                <p className="text-gray-300 font-medium">Asistente de Negocios</p>
+              </div>
+              <p className="text-gray-400 text-center text-sm">
+                Métricas y eficiencia empresarial
               </p>
             </div>
-          </div>
-        ))}
-        {isLoading && (
-          <div className="flex justify-start">
-            <div className="bg-gray-700 rounded-2xl px-5 py-4 shadow-lg">
-              <div className="flex gap-2">
-                <div className="w-3 h-3 bg-purple-500 rounded-full animate-bounce"></div>
-                <div className="w-3 h-3 bg-pink-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                <div className="w-3 h-3 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
-              </div>
-            </div>
-          </div>
-        )}
-        <div ref={messagesEndRef} />
-      </div>
+          </button>
 
-      <div className="p-5 bg-gray-900 border-t-2 border-gray-700">
-        <div className="flex gap-3">
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-            placeholder="Escribe tu mensaje..."
-            className="flex-1 border-2 border-gray-700 bg-gray-800 text-white rounded-2xl px-5 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all duration-300 text-sm placeholder-gray-500"
-            disabled={isLoading}
-          />
+          {/* James Card */}
           <button
-            onClick={handleSendMessage}
-            disabled={!input.trim() || isLoading}
-            className={`bg-gradient-to-r ${currentAssistant.color} text-white rounded-2xl px-5 hover:shadow-xl transition-all duration-300 disabled:opacity-50`}
+            onClick={() => setSelectedAssistant('james')}
+            className="group relative overflow-hidden rounded-3xl transition-all duration-300 hover:scale-105"
           >
-            <Send size={20} />
+            <div className="absolute inset-0 bg-gradient-to-br from-blue-600/20 via-cyan-500/20 to-teal-400/20" />
+            <div className="relative p-8 backdrop-blur-sm bg-gray-800/40 border border-gray-700 hover:border-gray-600 transition-all">
+              <div 
+                className="w-32 h-32 mx-auto mb-6 rounded-2xl flex items-center justify-center text-white text-5xl font-bold shadow-2xl"
+                style={{ backgroundColor: assistants.james.bgColor }}
+              >
+                James
+              </div>
+              <h2 className="text-3xl font-bold text-white mb-3 text-center">
+                James
+              </h2>
+              <div className="flex items-center justify-center gap-2 mb-4">
+                <Target className="w-5 h-5 text-gray-300" />
+                <p className="text-gray-300 font-medium">Asistente Personal</p>
+              </div>
+              <p className="text-gray-400 text-center text-sm">
+                Comodidad e inmediatez
+              </p>
+            </div>
           </button>
         </div>
       </div>
     </div>
   );
-};
+}
 
 export default App;

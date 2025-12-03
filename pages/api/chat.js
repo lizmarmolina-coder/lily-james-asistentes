@@ -1,31 +1,43 @@
 export default async function handler(req, res) {
-  // Solo permitir POST requests
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
-
   // Habilitar CORS
-  res.setHeader('Access-Control-Allow-Credentials', true);
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
+  // Manejar preflight request
   if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+    res.status(200).end();
+    return;
   }
 
-  const { messages, systemPrompt } = req.body;
-
-  if (!messages || !Array.isArray(messages)) {
-    return res.status(400).json({ error: 'Messages array is required' });
+  // Solo permitir POST
+  if (req.method !== 'POST') {
+    res.status(405).json({ error: 'Method not allowed' });
+    return;
   }
 
   try {
+    const { messages, systemPrompt } = req.body;
+
+    if (!messages || !Array.isArray(messages)) {
+      res.status(400).json({ error: 'Messages array is required' });
+      return;
+    }
+
+    const apiKey = process.env.REACT_APP_ANTHROPIC_API_KEY;
+    
+    if (!apiKey) {
+      console.error('API Key not found');
+      res.status(500).json({ error: 'API Key not configured' });
+      return;
+    }
+
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': process.env.REACT_APP_ANTHROPIC_API_KEY,
+        'x-api-key': apiKey,
         'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify({
@@ -37,20 +49,21 @@ export default async function handler(req, res) {
     });
 
     if (!response.ok) {
-      const errorData = await response.json();
-      console.error('Anthropic API error:', errorData);
-      return res.status(response.status).json({ 
+      const errorText = await response.text();
+      console.error('Anthropic API error:', response.status, errorText);
+      res.status(response.status).json({ 
         error: 'Error from Anthropic API',
-        details: errorData 
+        details: errorText
       });
+      return;
     }
 
     const data = await response.json();
-    return res.status(200).json(data);
+    res.status(200).json(data);
 
   } catch (error) {
     console.error('Server error:', error);
-    return res.status(500).json({ 
+    res.status(500).json({ 
       error: 'Internal server error',
       message: error.message 
     });

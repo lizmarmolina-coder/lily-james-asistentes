@@ -27,69 +27,65 @@ function App() {
   };
 
   useEffect(() => {
-    // Inicializar Google Sign-In
-    const initGoogleAuth = () => {
-      if (window.gapi) {
-        window.gapi.load('auth2', () => {
-          window.gapi.auth2.init({
-            client_id: process.env.REACT_APP_GOOGLE_CLIENT_ID,
-            scope: 'profile email https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/calendar.readonly'
-          }).then(() => {
-            const authInstance = window.gapi.auth2.getAuthInstance();
-            const isSignedIn = authInstance.isSignedIn.get();
-            
-            if (isSignedIn) {
-              const currentUser = authInstance.currentUser.get();
-              const profile = currentUser.getBasicProfile();
-              setUser({
-                name: profile.getName(),
-                email: profile.getEmail(),
-                imageUrl: profile.getImageUrl()
-              });
-              setIsAuthenticated(true);
-            }
-            setIsLoading(false);
-          }).catch(error => {
-            console.error('Error initializing Google Auth:', error);
-            setIsLoading(false);
-          });
-        });
-      }
-    };
-
-    // Cargar el script de Google API
+    // Cargar Google Identity Services
     const script = document.createElement('script');
-    script.src = 'https://apis.google.com/js/api.js';
-    script.onload = initGoogleAuth;
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    script.onload = initializeGoogleAuth;
     document.body.appendChild(script);
 
     return () => {
-      document.body.removeChild(script);
+      if (document.body.contains(script)) {
+        document.body.removeChild(script);
+      }
     };
   }, []);
 
-  const handleGoogleLogin = () => {
-    const authInstance = window.gapi.auth2.getAuthInstance();
-    authInstance.signIn().then(googleUser => {
-      const profile = googleUser.getBasicProfile();
-      setUser({
-        name: profile.getName(),
-        email: profile.getEmail(),
-        imageUrl: profile.getImageUrl()
+  const initializeGoogleAuth = () => {
+    if (window.google) {
+      window.google.accounts.id.initialize({
+        client_id: process.env.REACT_APP_GOOGLE_CLIENT_ID,
+        callback: handleCredentialResponse,
+        auto_select: false,
       });
-      setIsAuthenticated(true);
-    }).catch(error => {
-      console.error('Error during sign in:', error);
+      setIsLoading(false);
+    }
+  };
+
+  const handleCredentialResponse = (response) => {
+    // Decodificar el JWT token
+    const userObject = parseJwt(response.credential);
+    setUser({
+      name: userObject.name,
+      email: userObject.email,
+      imageUrl: userObject.picture
+    });
+    setIsAuthenticated(true);
+  };
+
+  const parseJwt = (token) => {
+    const base64Url = token.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(atob(base64).split('').map(c => {
+      return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+    }).join(''));
+    return JSON.parse(jsonPayload);
+  };
+
+  const handleGoogleLogin = () => {
+    window.google.accounts.id.prompt((notification) => {
+      if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+        console.log('Popup bloqueado o cancelado');
+      }
     });
   };
 
   const handleLogout = () => {
-    const authInstance = window.gapi.auth2.getAuthInstance();
-    authInstance.signOut().then(() => {
-      setIsAuthenticated(false);
-      setSelectedAssistant(null);
-      setUser(null);
-    });
+    window.google.accounts.id.disableAutoSelect();
+    setIsAuthenticated(false);
+    setSelectedAssistant(null);
+    setUser(null);
   };
 
   if (isLoading) {

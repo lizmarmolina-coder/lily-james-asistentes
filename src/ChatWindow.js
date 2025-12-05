@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ArrowLeft, Send, X } from 'lucide-react';
+import { ArrowLeft, Send } from 'lucide-react';
 
-function ChatWindow({ assistant, onBack, user, onLogout }) {
+function ChatWindow({ assistant, onBack, user, onLogout, accessToken }) {
   const [messages, setMessages] = useState([
     {
       role: 'assistant',
@@ -20,16 +20,113 @@ function ChatWindow({ assistant, onBack, user, onLogout }) {
     scrollToBottom();
   }, [messages]);
 
+  const searchDrive = async (query) => {
+    try {
+      const response = await window.gapi.client.drive.files.list({
+        q: `name contains '${query}' and trashed=false`,
+        pageSize: 10,
+        fields: 'files(id, name, mimeType, modifiedTime, webViewLink)'
+      });
+      return response.result.files || [];
+    } catch (error) {
+      console.error('Error searching Drive:', error);
+      return [];
+    }
+  };
+
+  const getCalendarEvents = async (timeMin, timeMax) => {
+    try {
+      const response = await window.gapi.client.calendar.events.list({
+        calendarId: 'primary',
+        timeMin: timeMin || new Date().toISOString(),
+        timeMax: timeMax || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        singleEvents: true,
+        orderBy: 'startTime'
+      });
+      return response.result.items || [];
+    } catch (error) {
+      console.error('Error getting calendar events:', error);
+      return [];
+    }
+  };
+
+  const detectIntent = (message) => {
+    const lowerMessage = message.toLowerCase();
+    
+    // Detectar búsqueda en Drive
+    if (lowerMessage.includes('busca') || lowerMessage.includes('encuentra') || 
+        lowerMessage.includes('archivo') || lowerMessage.includes('documento') ||
+        lowerMessage.includes('drive')) {
+      return 'search_drive';
+    }
+    
+    // Detectar consulta de calendario
+    if (lowerMessage.includes('agenda') || lowerMessage.includes('calendario') ||
+        lowerMessage.includes('reunión') || lowerMessage.includes('evento') ||
+        lowerMessage.includes('cita') || lowerMessage.includes('programado')) {
+      return 'check_calendar';
+    }
+    
+    return 'chat';
+  };
+
+  const extractSearchQuery = (message) => {
+    const patterns = [
+      /busca?\s+(?:el\s+)?(?:archivo\s+)?(?:documento\s+)?(?:sobre\s+)?['"]?([^'"]+)['"]?/i,
+      /encuentra?\s+(?:el\s+)?(?:archivo\s+)?(?:documento\s+)?(?:sobre\s+)?['"]?([^'"]+)['"]?/i,
+      /archivo\s+(?:de\s+)?(?:sobre\s+)?['"]?([^'"]+)['"]?/i
+    ];
+    
+    for (const pattern of patterns) {
+      const match = message.match(pattern);
+      if (match && match[1]) {
+        return match[1].trim();
+      }
+    }
+    
+    return null;
+  };
+
   const sendMessage = async () => {
     if (!input.trim() || isLoading) return;
 
     const userMessage = { role: 'user', content: input };
+    const userInput = input;
     setMessages(prev => [...prev, userMessage]);
     setInput('');
     setIsLoading(true);
 
     try {
-      // Llamar a nuestro endpoint serverless
+      const intent = detectIntent(userInput);
+      let contextInfo = '';
+
+      // Si tiene permisos de Drive/Calendar y detectamos intención
+      if (accessToken && window.gapi) {
+        if (intent === 'search_drive') {
+          const query = extractSearchQuery(userInput);
+          if (query) {
+            const files = await searchDrive(query);
+            if (files.length > 0) {
+              contextInfo = `\n\n[INFORMACIÓN DE GOOGLE DRIVE]\nEncontré ${files.length} archivos relacionados:\n${files.map(f => `- ${f.name} (${f.mimeType}) - ${f.webViewLink}`).join('\n')}\n[FIN DE INFORMACIÓN]`;
+            } else {
+              contextInfo = `\n\n[INFORMACIÓN DE GOOGLE DRIVE]\nNo encontré archivos con "${query}" en Google Drive.\n[FIN DE INFORMACIÓN]`;
+            }
+          }
+        } else if (intent === 'check_calendar') {
+          const events = await getCalendarEvents();
+          if (events.length > 0) {
+            contextInfo = `\n\n[INFORMACIÓN DE GOOGLE CALENDAR]\nEventos de hoy:\n${events.map(e => {
+              const start = e.start.dateTime || e.start.date;
+              const summary = e.summary || 'Sin título';
+              return `- ${start}: ${summary}`;
+            }).join('\n')}\n[FIN DE INFORMACIÓN]`;
+          } else {
+            contextInfo = `\n\n[INFORMACIÓN DE GOOGLE CALENDAR]\nNo tienes eventos programados para hoy.\n[FIN DE INFORMACIÓN]`;
+          }
+        }
+      }
+
+      // Llamar a la API con contexto adicional
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: {
@@ -40,13 +137,21 @@ function ChatWindow({ assistant, onBack, user, onLogout }) {
             role: msg.role,
             content: msg.content
           })),
-          systemPrompt: assistant.systemPrompt
+          systemPrompt: assistant.systemPrompt + (contextInfo ? `\n\nContexto adicional del usuario:${contextInfo}\n\nUsa esta información real para responder al usuario de forma específica y útil.` : '')
         })
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Error al enviar mensaje');
+        let errorMessage = 'Error al enviar mensaje';
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.error || errorMessage;
+        } catch (e) {
+          const errorText = await response.text();
+          console.error('Error response:', errorText);
+          errorMessage = `Error ${response.status}: ${errorText || 'Error del servidor'}`;
+        }
+        throw new Error(errorMessage);
       }
 
       const data = await response.json();
@@ -98,7 +203,9 @@ function ChatWindow({ assistant, onBack, user, onLogout }) {
             </div>
             <div>
               <h2 className="text-xl font-bold text-white">{assistant.name}</h2>
-              <p className="text-sm text-gray-400">Asistente Virtual</p>
+              <p className="text-sm text-gray-400">
+                {accessToken ? 'Con acceso a Drive y Calendar' : 'Asistente Virtual'}
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-4">

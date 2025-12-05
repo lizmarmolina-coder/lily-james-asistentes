@@ -22,20 +22,41 @@ function ChatWindow({ assistant, onBack, user, onLogout, accessToken }) {
 
   const searchDrive = async (query) => {
     try {
+      // Verificar que gapi esté listo
+      if (!window.gapi || !window.gapi.client || !window.gapi.client.drive) {
+        console.error('❌ Google Drive API no está disponible');
+        return null;
+      }
+
+      console.log('✅ Buscando en Drive:', query);
+      
       const response = await window.gapi.client.drive.files.list({
         q: `name contains '${query}' and trashed=false`,
         pageSize: 10,
         fields: 'files(id, name, mimeType, modifiedTime, webViewLink)'
       });
+      
+      console.log('📁 Archivos encontrados:', response.result.files?.length || 0);
       return response.result.files || [];
     } catch (error) {
-      console.error('Error searching Drive:', error);
-      return [];
+      console.error('❌ Error searching Drive:', error);
+      return null;
     }
   };
 
   const getCalendarEvents = async (timeMin, timeMax) => {
     try {
+      // Verificar que gapi esté listo
+      if (!window.gapi || !window.gapi.client || !window.gapi.client.calendar) {
+        console.error('❌ Google Calendar API no está disponible');
+        console.log('gapi:', !!window.gapi);
+        console.log('gapi.client:', !!window.gapi?.client);
+        console.log('gapi.client.calendar:', !!window.gapi?.client?.calendar);
+        return null;
+      }
+
+      console.log('✅ Obteniendo eventos del calendario...');
+      
       const response = await window.gapi.client.calendar.events.list({
         calendarId: 'primary',
         timeMin: timeMin || new Date().toISOString(),
@@ -43,10 +64,12 @@ function ChatWindow({ assistant, onBack, user, onLogout, accessToken }) {
         singleEvents: true,
         orderBy: 'startTime'
       });
+      
+      console.log('📅 Eventos encontrados:', response.result.items?.length || 0);
       return response.result.items || [];
     } catch (error) {
-      console.error('Error getting calendar events:', error);
-      return [];
+      console.error('❌ Error getting calendar events:', error);
+      return null;
     }
   };
 
@@ -101,12 +124,14 @@ function ChatWindow({ assistant, onBack, user, onLogout, accessToken }) {
       let contextInfo = '';
 
       // Si tiene permisos de Drive/Calendar y detectamos intención
-      if (accessToken && window.gapi) {
+      if (accessToken && window.gapi && window.gapi.client) {
         if (intent === 'search_drive') {
           const query = extractSearchQuery(userInput);
           if (query) {
             const files = await searchDrive(query);
-            if (files.length > 0) {
+            if (files === null) {
+              contextInfo = `\n\n[INFORMACIÓN]\nNo pude acceder a Google Drive en este momento. Por favor, intenta recargar la página e iniciar sesión de nuevo.\n[FIN DE INFORMACIÓN]`;
+            } else if (files.length > 0) {
               contextInfo = `\n\n[INFORMACIÓN DE GOOGLE DRIVE]\nEncontré ${files.length} archivos relacionados:\n${files.map(f => `- ${f.name} (${f.mimeType}) - ${f.webViewLink}`).join('\n')}\n[FIN DE INFORMACIÓN]`;
             } else {
               contextInfo = `\n\n[INFORMACIÓN DE GOOGLE DRIVE]\nNo encontré archivos con "${query}" en Google Drive.\n[FIN DE INFORMACIÓN]`;
@@ -114,7 +139,9 @@ function ChatWindow({ assistant, onBack, user, onLogout, accessToken }) {
           }
         } else if (intent === 'check_calendar') {
           const events = await getCalendarEvents();
-          if (events.length > 0) {
+          if (events === null) {
+            contextInfo = `\n\n[INFORMACIÓN]\nNo pude acceder a Google Calendar en este momento. Por favor, intenta recargar la página e iniciar sesión de nuevo.\n[FIN DE INFORMACIÓN]`;
+          } else if (events.length > 0) {
             contextInfo = `\n\n[INFORMACIÓN DE GOOGLE CALENDAR]\nEventos de hoy:\n${events.map(e => {
               const start = e.start.dateTime || e.start.date;
               const summary = e.summary || 'Sin título';

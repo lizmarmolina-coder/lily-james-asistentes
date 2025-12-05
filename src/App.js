@@ -78,19 +78,14 @@ function App() {
 
   const initializeGapi = async () => {
     try {
+      // Inicializar solo el cliente, SIN discoveryDocs
       await window.gapi.client.init({
         apiKey: process.env.REACT_APP_GOOGLE_API_KEY,
-        discoveryDocs: [
-          'https://www.googleapis.com/discovery/v1/apis/drive/v3/rest',
-          'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest'
-        ],
       });
       
-      console.log('✅ Google APIs initialized');
-      console.log('Calendar API:', !!window.gapi.client.calendar);
-      console.log('Drive API:', !!window.gapi.client.drive);
+      console.log('✅ GAPI client initialized (sin APIs cargadas aún)');
     } catch (error) {
-      console.error('❌ Error initializing Google APIs:', error);
+      console.error('❌ Error initializing GAPI client:', error);
     }
   };
 
@@ -124,14 +119,35 @@ function App() {
       scope: 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events',
       callback: async (tokenResponse) => {
         console.log('✅ Token de acceso recibido');
-        console.log('Token:', tokenResponse.access_token ? 'Presente' : 'Ausente');
+        console.log('Token:', tokenResponse.access_token ? 'Presente ✓' : 'Ausente ✗');
         
         setAccessToken(tokenResponse.access_token);
         
-        // Esperar un momento
-        await new Promise(resolve => setTimeout(resolve, 500));
+        // Configurar el token en gapi
+        window.gapi.client.setToken({
+          access_token: tokenResponse.access_token
+        });
         
-        console.log('✅ Permisos configurados');
+        console.log('🔄 Cargando APIs de Google Drive y Calendar...');
+        
+        // AHORA SÍ cargar las APIs con el token configurado
+        try {
+          await window.gapi.client.load('drive', 'v3');
+          console.log('✅ Google Drive API cargada');
+          
+          await window.gapi.client.load('calendar', 'v3');
+          console.log('✅ Google Calendar API cargada');
+          
+          // Verificar que las APIs estén disponibles
+          console.log('📊 Estado de APIs:');
+          console.log('  - Calendar API:', !!window.gapi.client.calendar ? '✓ Disponible' : '✗ No disponible');
+          console.log('  - Drive API:', !!window.gapi.client.drive ? '✓ Disponible' : '✗ No disponible');
+          
+        } catch (error) {
+          console.error('❌ Error cargando APIs de Google:', error);
+        }
+        
+        console.log('✅ Autenticación completa - Permisos configurados');
         setIsAuthenticated(true);
       },
       error_callback: (error) => {
@@ -165,10 +181,17 @@ function App() {
     if (window.google) {
       window.google.accounts.id.disableAutoSelect();
     }
+    
+    // Limpiar token de gapi si existe
+    if (window.gapi && window.gapi.client) {
+      window.gapi.client.setToken(null);
+    }
+    
     setIsAuthenticated(false);
     setSelectedAssistant(null);
     setUser(null);
     setAccessToken(null);
+    setGapiReady(false);
   };
 
   if (isLoading) {

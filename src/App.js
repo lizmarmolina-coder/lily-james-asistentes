@@ -9,6 +9,7 @@ function App() {
   const [user, setUser] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [accessToken, setAccessToken] = useState(null);
+  const [gapiReady, setGapiReady] = useState(false);
 
   const assistants = {
     lily: {
@@ -32,20 +33,25 @@ function App() {
   }, []);
 
   const loadGoogleAPI = () => {
+    // Cargar Google Sign-In
     const script = document.createElement('script');
     script.src = 'https://accounts.google.com/gsi/client';
     script.async = true;
     script.defer = true;
     
     script.onload = () => {
-      // Cargar también la API de Google
+      // Cargar gapi
       const gapiScript = document.createElement('script');
       gapiScript.src = 'https://apis.google.com/js/api.js';
       gapiScript.onload = () => {
-        window.gapi.load('client', initializeGapi);
+        window.gapi.load('client', async () => {
+          await initializeGapi();
+          setGapiReady(true);
+        });
       };
       document.head.appendChild(gapiScript);
       
+      // Inicializar Google Sign-In
       setTimeout(() => {
         if (window.google) {
           try {
@@ -70,14 +76,22 @@ function App() {
     document.head.appendChild(script);
   };
 
-  const initializeGapi = () => {
-    window.gapi.client.init({
-      apiKey: process.env.REACT_APP_GOOGLE_API_KEY,
-      discoveryDocs: [
-        'https://www.googleapis.com/discovery/v1/apis/drive/v3/rest',
-        'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest'
-      ],
-    });
+  const initializeGapi = async () => {
+    try {
+      await window.gapi.client.init({
+        apiKey: process.env.REACT_APP_GOOGLE_API_KEY,
+        discoveryDocs: [
+          'https://www.googleapis.com/discovery/v1/apis/drive/v3/rest',
+          'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest'
+        ],
+      });
+      
+      console.log('✅ Google APIs initialized');
+      console.log('Calendar API:', !!window.gapi.client.calendar);
+      console.log('Drive API:', !!window.gapi.client.drive);
+    } catch (error) {
+      console.error('❌ Error initializing Google APIs:', error);
+    }
   };
 
   const handleCredentialResponse = (response) => {
@@ -89,20 +103,30 @@ function App() {
         imageUrl: userObject.picture
       });
       
-      // Solicitar permisos adicionales para Drive y Calendar
-      requestAdditionalScopes(response.credential);
+      requestAdditionalScopes();
     } catch (error) {
       console.error('Error al procesar credenciales:', error);
     }
   };
 
-  const requestAdditionalScopes = (credential) => {
+  const requestAdditionalScopes = () => {
     const client = window.google.accounts.oauth2.initTokenClient({
       client_id: process.env.REACT_APP_GOOGLE_CLIENT_ID,
       scope: 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events',
-      callback: (tokenResponse) => {
+      callback: async (tokenResponse) => {
+        console.log('🔑 Token received');
         setAccessToken(tokenResponse.access_token);
+        
+        // Configurar token en gapi
         window.gapi.client.setToken({ access_token: tokenResponse.access_token });
+        
+        // Esperar un momento para que todo esté listo
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Verificar que APIs estén disponibles
+        console.log('📅 Calendar ready:', !!window.gapi.client.calendar);
+        console.log('📁 Drive ready:', !!window.gapi.client.drive);
+        
         setIsAuthenticated(true);
       },
     });
@@ -183,6 +207,7 @@ function App() {
         user={user}
         onLogout={handleLogout}
         accessToken={accessToken}
+        gapiReady={gapiReady}
       />
     );
   }

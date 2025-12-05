@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ArrowLeft, Send, Calendar, FileText, Loader2 } from 'lucide-react';
+import { ArrowLeft, Send, Calendar, FileText, Loader2, Users } from 'lucide-react';
 
 function ChatWindow({ assistant, onBack, user, onLogout, accessToken, gapiReady }) {
   const [messages, setMessages] = useState([
@@ -142,6 +142,109 @@ function ChatWindow({ assistant, onBack, user, onLogout, accessToken, gapiReady 
       return {
         success: false,
         error: error.message
+      };
+    }
+  };
+
+  // ============================================
+  // HERRAMIENTAS DE GOOGLE CONTACTS
+  // ============================================
+
+  const searchContacts = async (query, maxResults = 10) => {
+    if (!accessToken) {
+      throw new Error('No hay token de acceso disponible');
+    }
+
+    try {
+      console.log('👤 Buscando contactos:', query);
+      
+      const response = await fetch(
+        `https://people.googleapis.com/v1/people:searchContacts?query=${encodeURIComponent(query)}&readMask=names,emailAddresses,phoneNumbers,organizations&pageSize=${maxResults}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+          }
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Contacts API error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log('✅ Contactos encontrados:', data.results?.length || 0);
+      
+      // Formatear los contactos para respuesta más limpia
+      const contacts = (data.results || []).map(result => {
+        const person = result.person;
+        return {
+          resourceName: person.resourceName,
+          name: person.names?.[0]?.displayName || 'Sin nombre',
+          email: person.emailAddresses?.[0]?.value || null,
+          phone: person.phoneNumbers?.[0]?.value || null,
+          organization: person.organizations?.[0]?.name || null
+        };
+      });
+      
+      return {
+        success: true,
+        contacts: contacts,
+        count: contacts.length
+      };
+    } catch (error) {
+      console.error('❌ Error searching contacts:', error);
+      return {
+        success: false,
+        error: error.message,
+        contacts: []
+      };
+    }
+  };
+
+  const listContacts = async (maxResults = 20) => {
+    if (!accessToken) {
+      throw new Error('No hay token de acceso disponible');
+    }
+
+    try {
+      console.log('📇 Listando contactos...');
+      
+      const response = await fetch(
+        `https://people.googleapis.com/v1/people/me/connections?personFields=names,emailAddresses,phoneNumbers,organizations&pageSize=${maxResults}&sortOrder=LAST_MODIFIED_DESCENDING`,
+        {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+          }
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Contacts API error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log('✅ Contactos listados:', data.connections?.length || 0);
+      
+      // Formatear los contactos
+      const contacts = (data.connections || []).map(person => ({
+        resourceName: person.resourceName,
+        name: person.names?.[0]?.displayName || 'Sin nombre',
+        email: person.emailAddresses?.[0]?.value || null,
+        phone: person.phoneNumbers?.[0]?.value || null,
+        organization: person.organizations?.[0]?.name || null
+      }));
+      
+      return {
+        success: true,
+        contacts: contacts,
+        count: contacts.length
+      };
+    } catch (error) {
+      console.error('❌ Error listing contacts:', error);
+      return {
+        success: false,
+        error: error.message,
+        contacts: []
       };
     }
   };
@@ -309,6 +412,12 @@ function ChatWindow({ assistant, onBack, user, onLogout, accessToken, gapiReady 
         case 'create_calendar_event':
           return await createCalendarEvent(toolInput.event);
           
+        case 'search_contacts':
+          return await searchContacts(toolInput.query, toolInput.maxResults || 10);
+          
+        case 'list_contacts':
+          return await listContacts(toolInput.maxResults || 20);
+          
         default:
           return {
             success: false,
@@ -473,9 +582,11 @@ function ChatWindow({ assistant, onBack, user, onLogout, accessToken, gapiReady 
             '- list_recent_files: Listar archivos recientes\n' +
             '- list_calendar_events: Listar eventos del calendario\n' +
             '- search_calendar_events: Buscar eventos específicos\n' +
-            '- create_calendar_event: Crear nuevos eventos\n\n' +
-            'Usa estas herramientas cuando el usuario solicite información de su Drive o Calendar.' : 
-            '\n\nNOTA: El usuario aún no ha otorgado permisos para acceder a Drive y Calendar.'
+            '- create_calendar_event: Crear nuevos eventos\n' +
+            '- search_contacts: Buscar contactos por nombre/email\n' +
+            '- list_contacts: Listar contactos recientes\n\n' +
+            'Usa estas herramientas cuando el usuario solicite información de su Drive, Calendar o Contactos. Para agregar participantes a eventos, primero busca el contacto para obtener su email correcto.' : 
+            '\n\nNOTA: El usuario aún no ha otorgado permisos para acceder a Drive, Calendar y Contactos.'
           )
         };
 
@@ -608,12 +719,12 @@ function ChatWindow({ assistant, onBack, user, onLogout, accessToken, gapiReady 
                 {accessToken ? (
                   <>
                     <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-                    Conectado a Drive y Calendar
+                    Conectado a Drive, Calendar y Contactos
                   </>
                 ) : (
                   <>
                     <span className="w-2 h-2 bg-gray-500 rounded-full"></span>
-                    Sin permisos de Drive/Calendar
+                    Sin permisos de Google
                   </>
                 )}
               </p>
@@ -668,6 +779,8 @@ function ChatWindow({ assistant, onBack, user, onLogout, accessToken, gapiReady 
                     <div key={i} className="flex items-center gap-2 text-xs text-purple-300">
                       {tool.name === 'search_drive' || tool.name === 'list_recent_files' ? (
                         <FileText className="w-3 h-3" />
+                      ) : tool.name === 'search_contacts' || tool.name === 'list_contacts' ? (
+                        <Users className="w-3 h-3" />
                       ) : (
                         <Calendar className="w-3 h-3" />
                       )}

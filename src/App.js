@@ -96,6 +96,7 @@ function App() {
 
   const handleCredentialResponse = (response) => {
     try {
+      console.log('📧 Credenciales de Google recibidas');
       const userObject = parseJwt(response.credential);
       setUser({
         name: userObject.name,
@@ -103,6 +104,7 @@ function App() {
         imageUrl: userObject.picture
       });
       
+      console.log('🔑 Solicitando permisos adicionales...');
       requestAdditionalScopes();
     } catch (error) {
       console.error('Error al procesar credenciales:', error);
@@ -110,27 +112,35 @@ function App() {
   };
 
   const requestAdditionalScopes = () => {
+    console.log('📋 Inicializando cliente OAuth para permisos...');
+    
+    if (!window.google || !window.google.accounts || !window.google.accounts.oauth2) {
+      console.error('❌ Google OAuth2 no está disponible');
+      return;
+    }
+
     const client = window.google.accounts.oauth2.initTokenClient({
       client_id: process.env.REACT_APP_GOOGLE_CLIENT_ID,
       scope: 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events',
       callback: async (tokenResponse) => {
-        console.log('🔑 Token received');
+        console.log('✅ Token de acceso recibido');
+        console.log('Token:', tokenResponse.access_token ? 'Presente' : 'Ausente');
+        
         setAccessToken(tokenResponse.access_token);
         
-        // Configurar token en gapi
-        window.gapi.client.setToken({ access_token: tokenResponse.access_token });
-        
-        // Esperar un momento para que todo esté listo
+        // Esperar un momento
         await new Promise(resolve => setTimeout(resolve, 500));
         
-        // Verificar que APIs estén disponibles
-        console.log('📅 Calendar ready:', !!window.gapi.client.calendar);
-        console.log('📁 Drive ready:', !!window.gapi.client.drive);
-        
+        console.log('✅ Permisos configurados');
         setIsAuthenticated(true);
       },
+      error_callback: (error) => {
+        console.error('❌ Error al solicitar permisos:', error);
+      }
     });
-    client.requestAccessToken();
+    
+    console.log('🔓 Solicitando acceso al usuario...');
+    client.requestAccessToken({ prompt: 'consent' });
   };
 
   const parseJwt = (token) => {

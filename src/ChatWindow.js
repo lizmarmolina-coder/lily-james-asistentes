@@ -15,10 +15,11 @@ function ChatWindow({ assistant, onBack, user, onLogout, accessToken, gapiReady 
 
   useEffect(() => {
     // Verificar si tiene permisos
-    if (accessToken && gapiReady && window.gapi?.client?.calendar) {
+    if (accessToken) {
+      console.log('✅ Access token disponible');
       setPermissionsGranted(true);
     }
-  }, [accessToken, gapiReady]);
+  }, [accessToken]);
 
   const requestPermissions = () => {
     if (!window.google) {
@@ -54,23 +55,31 @@ function ChatWindow({ assistant, onBack, user, onLogout, accessToken, gapiReady 
   }, [messages]);
 
   const searchDrive = async (query) => {
+    if (!accessToken) {
+      console.error('❌ No access token available');
+      return null;
+    }
+
     try {
-      // Verificar que gapi esté listo
-      if (!window.gapi || !window.gapi.client || !window.gapi.client.drive) {
-        console.error('❌ Google Drive API no está disponible');
+      console.log('✅ Buscando en Drive:', query);
+      
+      const response = await fetch(
+        `https://www.googleapis.com/drive/v3/files?q=name contains '${query}' and trashed=false&pageSize=10&fields=files(id,name,mimeType,modifiedTime,webViewLink)`,
+        {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+          }
+        }
+      );
+
+      if (!response.ok) {
+        console.error('❌ Drive API error:', response.status);
         return null;
       }
 
-      console.log('✅ Buscando en Drive:', query);
-      
-      const response = await window.gapi.client.drive.files.list({
-        q: `name contains '${query}' and trashed=false`,
-        pageSize: 10,
-        fields: 'files(id, name, mimeType, modifiedTime, webViewLink)'
-      });
-      
-      console.log('📁 Archivos encontrados:', response.result.files?.length || 0);
-      return response.result.files || [];
+      const data = await response.json();
+      console.log('📁 Archivos encontrados:', data.files?.length || 0);
+      return data.files || [];
     } catch (error) {
       console.error('❌ Error searching Drive:', error);
       return null;
@@ -78,28 +87,42 @@ function ChatWindow({ assistant, onBack, user, onLogout, accessToken, gapiReady 
   };
 
   const getCalendarEvents = async (timeMin, timeMax) => {
+    if (!accessToken) {
+      console.error('❌ No access token available');
+      return null;
+    }
+
     try {
-      // Verificar que gapi esté listo
-      if (!window.gapi || !window.gapi.client || !window.gapi.client.calendar) {
-        console.error('❌ Google Calendar API no está disponible');
-        console.log('gapi:', !!window.gapi);
-        console.log('gapi.client:', !!window.gapi?.client);
-        console.log('gapi.client.calendar:', !!window.gapi?.client?.calendar);
+      console.log('✅ Obteniendo eventos del calendario...');
+      
+      const startTime = timeMin || new Date().toISOString();
+      const endTime = timeMax || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+      
+      const response = await fetch(
+        `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(startTime)}&timeMax=${encodeURIComponent(endTime)}&singleEvents=true&orderBy=startTime`,
+        {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+          }
+        }
+      );
+
+      if (!response.ok) {
+        console.error('❌ Calendar API error:', response.status);
         return null;
       }
 
-      console.log('✅ Obteniendo eventos del calendario...');
+      const data = await response.json();
+      console.log('📅 Eventos encontrados:', data.items?.length || 0);
       
-      const response = await window.gapi.client.calendar.events.list({
-        calendarId: 'primary',
-        timeMin: timeMin || new Date().toISOString(),
-        timeMax: timeMax || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-        singleEvents: true,
-        orderBy: 'startTime'
-      });
+      if (data.items && data.items.length > 0) {
+        console.log('Eventos:', data.items.map(e => ({
+          summary: e.summary,
+          start: e.start.dateTime || e.start.date
+        })));
+      }
       
-      console.log('📅 Eventos encontrados:', response.result.items?.length || 0);
-      return response.result.items || [];
+      return data.items || [];
     } catch (error) {
       console.error('❌ Error getting calendar events:', error);
       return null;
@@ -157,7 +180,7 @@ function ChatWindow({ assistant, onBack, user, onLogout, accessToken, gapiReady 
       let contextInfo = '';
 
       // Si tiene permisos de Drive/Calendar y detectamos intención
-      if (accessToken && window.gapi && window.gapi.client) {
+      if (accessToken) {
         if (intent === 'search_drive') {
           const query = extractSearchQuery(userInput);
           if (query) {

@@ -8,84 +8,133 @@ function App() {
   const [selectedAssistant, setSelectedAssistant] = useState(null);
   const [user, setUser] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [accessToken, setAccessToken] = useState(null);
 
   const assistants = {
     lily: {
       name: 'Lily',
       color: 'from-purple-600 via-pink-500 to-red-500',
       bgColor: '#17ABAE',
-      greeting: '¡Hola! Soy Lily, tu asistente de negocios. 💼\n\nEstoy aquí para ayudarte con estrategias empresariales, análisis de datos, soporte técnico y creación de dashboards en Power BI.\n\n¿En qué puedo ayudarte hoy?',
-      systemPrompt: `Eres Lily, una asistente virtual de negocios experta en métricas y eficiencia. Eres profesional, orientada a resultados y proporcionas soluciones prácticas.`
+      greeting: '¡Hola! Soy Lily, tu asistente de negocios. 💼\n\nEstoy aquí para ayudarte con estrategias empresariales, análisis de datos, soporte técnico y creación de dashboards en Power BI.\n\nTambién puedo acceder a tus archivos de Google Drive y Calendar.\n\n¿En qué puedo ayudarte hoy?',
+      systemPrompt: `Eres Lily, una asistente virtual de negocios experta en métricas y eficiencia. Eres profesional, orientada a resultados y proporcionas soluciones prácticas. Puedes ayudar con Google Drive y Calendar cuando el usuario lo solicite.`
     },
     james: {
       name: 'James',
       color: 'from-blue-600 via-cyan-500 to-teal-400',
       bgColor: '#17ABAE',
-      greeting: '¡Hola! Soy James, tu asistente personal. 🎯\n\nPuedo ayudarte con la gestión de tareas, planificación de proyectos personales y organización de tu agenda.\n\n¿Qué necesitas organizar hoy?',
-      systemPrompt: `Eres James, un asistente virtual personal enfocado en comodidad e inmediatez. Eres amigable, organizado y ayudas al usuario a ser más productivo.`
+      greeting: '¡Hola! Soy James, tu asistente personal. 🎯\n\nPuedo ayudarte con la gestión de tareas, planificación de proyectos personales y organización de tu agenda.\n\nTengo acceso a tu Google Drive y Calendar para ayudarte mejor.\n\n¿Qué necesitas organizar hoy?',
+      systemPrompt: `Eres James, un asistente virtual personal enfocado en comodidad e inmediatez. Eres amigable, organizado y ayudas al usuario a ser más productivo. Puedes acceder a Google Drive y Calendar cuando sea necesario.`
     }
   };
 
   useEffect(() => {
-    // Cargar Google Identity Services
+    loadGoogleAPI();
+  }, []);
+
+  const loadGoogleAPI = () => {
     const script = document.createElement('script');
     script.src = 'https://accounts.google.com/gsi/client';
     script.async = true;
     script.defer = true;
-    script.onload = initializeGoogleAuth;
-    document.body.appendChild(script);
-
-    return () => {
-      if (document.body.contains(script)) {
-        document.body.removeChild(script);
-      }
+    
+    script.onload = () => {
+      // Cargar también la API de Google
+      const gapiScript = document.createElement('script');
+      gapiScript.src = 'https://apis.google.com/js/api.js';
+      gapiScript.onload = () => {
+        window.gapi.load('client', initializeGapi);
+      };
+      document.head.appendChild(gapiScript);
+      
+      setTimeout(() => {
+        if (window.google) {
+          try {
+            window.google.accounts.id.initialize({
+              client_id: process.env.REACT_APP_GOOGLE_CLIENT_ID,
+              callback: handleCredentialResponse,
+            });
+            setIsLoading(false);
+          } catch (error) {
+            console.error('Error al inicializar Google:', error);
+            setIsLoading(false);
+          }
+        }
+      }, 100);
     };
-  }, []);
 
-  const initializeGoogleAuth = () => {
-    if (window.google) {
-      window.google.accounts.id.initialize({
-        client_id: process.env.REACT_APP_GOOGLE_CLIENT_ID,
-        callback: handleCredentialResponse,
-        auto_select: false,
-      });
+    script.onerror = () => {
+      console.error('Error al cargar el script de Google');
       setIsLoading(false);
-    }
+    };
+
+    document.head.appendChild(script);
+  };
+
+  const initializeGapi = () => {
+    window.gapi.client.init({
+      apiKey: process.env.REACT_APP_GOOGLE_API_KEY,
+      discoveryDocs: [
+        'https://www.googleapis.com/discovery/v1/apis/drive/v3/rest',
+        'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest'
+      ],
+    });
   };
 
   const handleCredentialResponse = (response) => {
-    // Decodificar el JWT token
-    const userObject = parseJwt(response.credential);
-    setUser({
-      name: userObject.name,
-      email: userObject.email,
-      imageUrl: userObject.picture
+    try {
+      const userObject = parseJwt(response.credential);
+      setUser({
+        name: userObject.name,
+        email: userObject.email,
+        imageUrl: userObject.picture
+      });
+      
+      // Solicitar permisos adicionales para Drive y Calendar
+      requestAdditionalScopes(response.credential);
+    } catch (error) {
+      console.error('Error al procesar credenciales:', error);
+    }
+  };
+
+  const requestAdditionalScopes = (credential) => {
+    const client = window.google.accounts.oauth2.initTokenClient({
+      client_id: process.env.REACT_APP_GOOGLE_CLIENT_ID,
+      scope: 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events',
+      callback: (tokenResponse) => {
+        setAccessToken(tokenResponse.access_token);
+        window.gapi.client.setToken({ access_token: tokenResponse.access_token });
+        setIsAuthenticated(true);
+      },
     });
-    setIsAuthenticated(true);
+    client.requestAccessToken();
   };
 
   const parseJwt = (token) => {
     const base64Url = token.split('.')[1];
     const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-    const jsonPayload = decodeURIComponent(atob(base64).split('').map(c => {
-      return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-    }).join(''));
+    const jsonPayload = decodeURIComponent(
+      atob(base64)
+        .split('')
+        .map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join('')
+    );
     return JSON.parse(jsonPayload);
   };
 
   const handleGoogleLogin = () => {
-    window.google.accounts.id.prompt((notification) => {
-      if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-        console.log('Popup bloqueado o cancelado');
-      }
-    });
+    if (window.google) {
+      window.google.accounts.id.prompt();
+    }
   };
 
   const handleLogout = () => {
-    window.google.accounts.id.disableAutoSelect();
+    if (window.google) {
+      window.google.accounts.id.disableAutoSelect();
+    }
     setIsAuthenticated(false);
     setSelectedAssistant(null);
     setUser(null);
+    setAccessToken(null);
   };
 
   if (isLoading) {
@@ -104,7 +153,7 @@ function App() {
             Lily & James
           </h1>
           <p className="text-gray-300 text-center mb-8">
-            Tus asistentes virtuales
+            Tus asistentes virtuales con acceso a Drive y Calendar
           </p>
           <button
             onClick={handleGoogleLogin}
@@ -118,6 +167,9 @@ function App() {
             </svg>
             Iniciar sesión con Google
           </button>
+          <p className="text-gray-400 text-xs text-center mt-4">
+            Se solicitarán permisos para acceder a Drive y Calendar
+          </p>
         </div>
       </div>
     );
@@ -130,6 +182,7 @@ function App() {
         onBack={() => setSelectedAssistant(null)}
         user={user}
         onLogout={handleLogout}
+        accessToken={accessToken}
       />
     );
   }
@@ -142,11 +195,13 @@ function App() {
             Elige tu Asistente Virtual
           </h1>
           <div className="flex items-center gap-4">
-            <img
-              src={user?.imageUrl}
-              alt={user?.name}
-              className="w-10 h-10 rounded-full border-2 border-gray-600"
-            />
+            {user?.imageUrl && (
+              <img
+                src={user.imageUrl}
+                alt={user.name}
+                className="w-10 h-10 rounded-full border-2 border-gray-600"
+              />
+            )}
             <button
               onClick={handleLogout}
               className="text-gray-300 hover:text-white transition-colors"
@@ -157,7 +212,6 @@ function App() {
         </div>
 
         <div className="grid md:grid-cols-2 gap-8">
-          {/* Lily Card */}
           <button
             onClick={() => setSelectedAssistant('lily')}
             className="group relative overflow-hidden rounded-3xl transition-all duration-300 hover:scale-105"
@@ -183,7 +237,6 @@ function App() {
             </div>
           </button>
 
-          {/* James Card */}
           <button
             onClick={() => setSelectedAssistant('james')}
             className="group relative overflow-hidden rounded-3xl transition-all duration-300 hover:scale-105"

@@ -116,7 +116,7 @@ function App() {
 
     const client = window.google.accounts.oauth2.initTokenClient({
       client_id: process.env.REACT_APP_GOOGLE_CLIENT_ID,
-      scope: 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events',
+      scope: 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/calendar.events',
       callback: async (tokenResponse) => {
         console.log('✅ Token de acceso recibido');
         console.log('Token:', tokenResponse.access_token ? 'Presente ✓' : 'Ausente ✗');

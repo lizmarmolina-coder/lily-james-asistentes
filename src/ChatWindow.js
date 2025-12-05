@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ArrowLeft, Send } from 'lucide-react';
 
-function ChatWindow({ assistant, onBack, user, onLogout, accessToken }) {
+function ChatWindow({ assistant, onBack, user, onLogout, accessToken, gapiReady }) {
   const [messages, setMessages] = useState([
     {
       role: 'assistant',
@@ -10,7 +10,40 @@ function ChatWindow({ assistant, onBack, user, onLogout, accessToken }) {
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [permissionsGranted, setPermissionsGranted] = useState(false);
   const messagesEndRef = useRef(null);
+
+  useEffect(() => {
+    // Verificar si tiene permisos
+    if (accessToken && gapiReady && window.gapi?.client?.calendar) {
+      setPermissionsGranted(true);
+    }
+  }, [accessToken, gapiReady]);
+
+  const requestPermissions = () => {
+    if (!window.google) {
+      alert('Google API no está cargada. Por favor recarga la página.');
+      return;
+    }
+
+    const client = window.google.accounts.oauth2.initTokenClient({
+      client_id: process.env.REACT_APP_GOOGLE_CLIENT_ID,
+      scope: 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events',
+      callback: async (tokenResponse) => {
+        console.log('🔑 Permisos otorgados');
+        window.gapi.client.setToken({ access_token: tokenResponse.access_token });
+        await new Promise(resolve => setTimeout(resolve, 500));
+        setPermissionsGranted(true);
+        
+        // Agregar mensaje del asistente
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: '¡Perfecto! Ya tengo acceso a tu Drive y Calendar. Ahora puedo ayudarte con tu agenda y archivos. 📅📁'
+        }]);
+      },
+    });
+    client.requestAccessToken();
+  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -254,6 +287,27 @@ function ChatWindow({ assistant, onBack, user, onLogout, accessToken }) {
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4">
         <div className="max-w-4xl mx-auto space-y-4">
+          {/* Botón de permisos si no están otorgados */}
+          {!permissionsGranted && (
+            <div className="bg-yellow-900/30 border border-yellow-600 rounded-lg p-4 flex items-start gap-3">
+              <div className="text-yellow-500 text-2xl">⚠️</div>
+              <div className="flex-1">
+                <p className="text-yellow-200 font-semibold mb-2">
+                  Permisos necesarios
+                </p>
+                <p className="text-yellow-100 text-sm mb-3">
+                  Para acceder a tu Drive y Calendar, necesito que me autorices. Haz clic en el botón para otorgar permisos.
+                </p>
+                <button
+                  onClick={requestPermissions}
+                  className="bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"
+                >
+                  Otorgar permisos a Drive y Calendar
+                </button>
+              </div>
+            </div>
+          )}
+          
           {messages.map((message, index) => (
             <div
               key={index}

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ArrowLeft, Send } from 'lucide-react';
+import { ArrowLeft, Send, Calendar, FileText, Loader2 } from 'lucide-react';
 
 function ChatWindow({ assistant, onBack, user, onLogout, accessToken, gapiReady }) {
   const [messages, setMessages] = useState([
@@ -10,41 +10,14 @@ function ChatWindow({ assistant, onBack, user, onLogout, accessToken, gapiReady 
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [permissionsGranted, setPermissionsGranted] = useState(false);
+  const [toolCalls, setToolCalls] = useState([]);
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
-    // Verificar si tiene permisos
-    if (accessToken) {
-      console.log('✅ Access token disponible');
-      setPermissionsGranted(true);
+    if (accessToken && gapiReady) {
+      console.log('✅ Access token y GAPI disponibles');
     }
-  }, [accessToken]);
-
-  const requestPermissions = () => {
-    if (!window.google) {
-      alert('Google API no está cargada. Por favor recarga la página.');
-      return;
-    }
-
-    const client = window.google.accounts.oauth2.initTokenClient({
-      client_id: process.env.REACT_APP_GOOGLE_CLIENT_ID,
-      scope: 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events',
-      callback: async (tokenResponse) => {
-        console.log('🔑 Permisos otorgados');
-        window.gapi.client.setToken({ access_token: tokenResponse.access_token });
-        await new Promise(resolve => setTimeout(resolve, 500));
-        setPermissionsGranted(true);
-        
-        // Agregar mensaje del asistente
-        setMessages(prev => [...prev, {
-          role: 'assistant',
-          content: '¡Perfecto! Ya tengo acceso a tu Drive y Calendar. Ahora puedo ayudarte con tu agenda y archivos. 📅📁'
-        }]);
-      },
-    });
-    client.requestAccessToken();
-  };
+  }, [accessToken, gapiReady]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -54,17 +27,20 @@ function ChatWindow({ assistant, onBack, user, onLogout, accessToken, gapiReady 
     scrollToBottom();
   }, [messages]);
 
-  const searchDrive = async (query) => {
+  // ============================================
+  // HERRAMIENTAS DE GOOGLE DRIVE
+  // ============================================
+
+  const searchDriveFiles = async (query, maxResults = 10) => {
     if (!accessToken) {
-      console.error('❌ No access token available');
-      return null;
+      throw new Error('No hay token de acceso disponible');
     }
 
     try {
-      console.log('✅ Buscando en Drive:', query);
+      console.log('🔍 Buscando en Drive:', query);
       
       const response = await fetch(
-        `https://www.googleapis.com/drive/v3/files?q=name contains '${query}' and trashed=false&pageSize=10&fields=files(id,name,mimeType,modifiedTime,webViewLink)`,
+        `https://www.googleapis.com/drive/v3/files?q=name contains '${query}' and trashed=false&pageSize=${maxResults}&fields=files(id,name,mimeType,modifiedTime,webViewLink,size,owners)`,
         {
           headers: {
             'Authorization': `Bearer ${accessToken}`,
@@ -73,33 +49,37 @@ function ChatWindow({ assistant, onBack, user, onLogout, accessToken, gapiReady 
       );
 
       if (!response.ok) {
-        console.error('❌ Drive API error:', response.status);
-        return null;
+        throw new Error(`Drive API error: ${response.status}`);
       }
 
       const data = await response.json();
-      console.log('📁 Archivos encontrados:', data.files?.length || 0);
-      return data.files || [];
+      console.log('✅ Archivos encontrados:', data.files?.length || 0);
+      
+      return {
+        success: true,
+        files: data.files || [],
+        count: data.files?.length || 0
+      };
     } catch (error) {
       console.error('❌ Error searching Drive:', error);
-      return null;
+      return {
+        success: false,
+        error: error.message,
+        files: []
+      };
     }
   };
 
-  const getCalendarEvents = async (timeMin, timeMax) => {
+  const listRecentFiles = async (maxResults = 20) => {
     if (!accessToken) {
-      console.error('❌ No access token available');
-      return null;
+      throw new Error('No hay token de acceso disponible');
     }
 
     try {
-      console.log('✅ Obteniendo eventos del calendario...');
-      
-      const startTime = timeMin || new Date().toISOString();
-      const endTime = timeMax || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+      console.log('📁 Listando archivos recientes...');
       
       const response = await fetch(
-        `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(startTime)}&timeMax=${encodeURIComponent(endTime)}&singleEvents=true&orderBy=startTime`,
+        `https://www.googleapis.com/drive/v3/files?pageSize=${maxResults}&orderBy=modifiedTime desc&fields=files(id,name,mimeType,modifiedTime,webViewLink)`,
         {
           headers: {
             'Authorization': `Bearer ${accessToken}`,
@@ -108,154 +88,492 @@ function ChatWindow({ assistant, onBack, user, onLogout, accessToken, gapiReady 
       );
 
       if (!response.ok) {
-        console.error('❌ Calendar API error:', response.status);
-        return null;
+        throw new Error(`Drive API error: ${response.status}`);
       }
 
       const data = await response.json();
-      console.log('📅 Eventos encontrados:', data.items?.length || 0);
+      console.log('✅ Archivos recientes:', data.files?.length || 0);
       
-      if (data.items && data.items.length > 0) {
-        console.log('Eventos:', data.items.map(e => ({
-          summary: e.summary,
-          start: e.start.dateTime || e.start.date
-        })));
-      }
-      
-      return data.items || [];
+      return {
+        success: true,
+        files: data.files || [],
+        count: data.files?.length || 0
+      };
     } catch (error) {
-      console.error('❌ Error getting calendar events:', error);
-      return null;
+      console.error('❌ Error listing files:', error);
+      return {
+        success: false,
+        error: error.message,
+        files: []
+      };
     }
   };
 
-  const detectIntent = (message) => {
-    const lowerMessage = message.toLowerCase();
-    
-    // Detectar búsqueda en Drive
-    if (lowerMessage.includes('busca') || lowerMessage.includes('encuentra') || 
-        lowerMessage.includes('archivo') || lowerMessage.includes('documento') ||
-        lowerMessage.includes('drive')) {
-      return 'search_drive';
+  const getFileById = async (fileId) => {
+    if (!accessToken) {
+      throw new Error('No hay token de acceso disponible');
     }
-    
-    // Detectar consulta de calendario
-    if (lowerMessage.includes('agenda') || lowerMessage.includes('calendario') ||
-        lowerMessage.includes('reunión') || lowerMessage.includes('evento') ||
-        lowerMessage.includes('cita') || lowerMessage.includes('programado')) {
-      return 'check_calendar';
+
+    try {
+      console.log('📄 Obteniendo archivo:', fileId);
+      
+      const response = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${fileId}?fields=id,name,mimeType,modifiedTime,webViewLink,size,owners,description`,
+        {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+          }
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Drive API error: ${response.status}`);
+      }
+
+      const file = await response.json();
+      console.log('✅ Archivo obtenido:', file.name);
+      
+      return {
+        success: true,
+        file: file
+      };
+    } catch (error) {
+      console.error('❌ Error getting file:', error);
+      return {
+        success: false,
+        error: error.message
+      };
     }
-    
-    return 'chat';
   };
 
-  const extractSearchQuery = (message) => {
-    const patterns = [
-      /busca?\s+(?:el\s+)?(?:archivo\s+)?(?:documento\s+)?(?:sobre\s+)?['"]?([^'"]+)['"]?/i,
-      /encuentra?\s+(?:el\s+)?(?:archivo\s+)?(?:documento\s+)?(?:sobre\s+)?['"]?([^'"]+)['"]?/i,
-      /archivo\s+(?:de\s+)?(?:sobre\s+)?['"]?([^'"]+)['"]?/i
-    ];
+  // ============================================
+  // HERRAMIENTAS DE GOOGLE CALENDAR
+  // ============================================
+
+  const listCalendarEvents = async (timeMin, timeMax, maxResults = 10) => {
+    if (!accessToken) {
+      throw new Error('No hay token de acceso disponible');
+    }
+
+    try {
+      console.log('📅 Listando eventos del calendario...');
+      
+      const startTime = timeMin || new Date().toISOString();
+      const endTime = timeMax || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+      
+      const response = await fetch(
+        `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(startTime)}&timeMax=${encodeURIComponent(endTime)}&maxResults=${maxResults}&singleEvents=true&orderBy=startTime`,
+        {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+          }
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Calendar API error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log('✅ Eventos encontrados:', data.items?.length || 0);
+      
+      return {
+        success: true,
+        events: data.items || [],
+        count: data.items?.length || 0
+      };
+    } catch (error) {
+      console.error('❌ Error listing events:', error);
+      return {
+        success: false,
+        error: error.message,
+        events: []
+      };
+    }
+  };
+
+  const searchCalendarEvents = async (query, timeMin, timeMax) => {
+    if (!accessToken) {
+      throw new Error('No hay token de acceso disponible');
+    }
+
+    try {
+      console.log('🔍 Buscando eventos:', query);
+      
+      const startTime = timeMin || new Date().toISOString();
+      const endTime = timeMax || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      
+      const response = await fetch(
+        `https://www.googleapis.com/calendar/v3/calendars/primary/events?q=${encodeURIComponent(query)}&timeMin=${encodeURIComponent(startTime)}&timeMax=${encodeURIComponent(endTime)}&singleEvents=true&orderBy=startTime`,
+        {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+          }
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Calendar API error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log('✅ Eventos encontrados:', data.items?.length || 0);
+      
+      return {
+        success: true,
+        events: data.items || [],
+        count: data.items?.length || 0
+      };
+    } catch (error) {
+      console.error('❌ Error searching events:', error);
+      return {
+        success: false,
+        error: error.message,
+        events: []
+      };
+    }
+  };
+
+  const createCalendarEvent = async (eventData) => {
+    if (!accessToken) {
+      throw new Error('No hay token de acceso disponible');
+    }
+
+    try {
+      console.log('📝 Creando evento:', eventData.summary);
+      
+      const response = await fetch(
+        'https://www.googleapis.com/calendar/v3/calendars/primary/events',
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(eventData)
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Calendar API error: ${response.status}`);
+      }
+
+      const event = await response.json();
+      console.log('✅ Evento creado:', event.id);
+      
+      return {
+        success: true,
+        event: event
+      };
+    } catch (error) {
+      console.error('❌ Error creating event:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  };
+
+  // ============================================
+  // MANEJADOR DE HERRAMIENTAS
+  // ============================================
+
+  const handleToolCall = async (toolName, toolInput) => {
+    console.log(`🔧 Ejecutando herramienta: ${toolName}`, toolInput);
     
-    for (const pattern of patterns) {
-      const match = message.match(pattern);
-      if (match && match[1]) {
-        return match[1].trim();
+    try {
+      switch (toolName) {
+        case 'search_drive':
+          return await searchDriveFiles(toolInput.query, toolInput.maxResults || 10);
+          
+        case 'list_recent_files':
+          return await listRecentFiles(toolInput.maxResults || 20);
+          
+        case 'get_file_by_id':
+          return await getFileById(toolInput.fileId);
+          
+        case 'list_calendar_events':
+          return await listCalendarEvents(
+            toolInput.timeMin,
+            toolInput.timeMax,
+            toolInput.maxResults || 10
+          );
+          
+        case 'search_calendar_events':
+          return await searchCalendarEvents(
+            toolInput.query,
+            toolInput.timeMin,
+            toolInput.timeMax
+          );
+          
+        case 'create_calendar_event':
+          return await createCalendarEvent(toolInput.event);
+          
+        default:
+          return {
+            success: false,
+            error: `Herramienta desconocida: ${toolName}`
+          };
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  };
+
+  // ============================================
+  // DEFINICIÓN DE HERRAMIENTAS PARA CLAUDE
+  // ============================================
+
+  const tools = [
+    {
+      name: 'search_drive',
+      description: 'Busca archivos en Google Drive del usuario por nombre o contenido. Útil para encontrar documentos, hojas de cálculo, presentaciones, etc.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'Término de búsqueda para encontrar archivos en Drive'
+          },
+          maxResults: {
+            type: 'number',
+            description: 'Número máximo de resultados a retornar (default: 10)'
+          }
+        },
+        required: ['query']
+      }
+    },
+    {
+      name: 'list_recent_files',
+      description: 'Lista los archivos más recientes de Google Drive del usuario, ordenados por fecha de modificación.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          maxResults: {
+            type: 'number',
+            description: 'Número máximo de archivos a listar (default: 20)'
+          }
+        },
+        required: []
+      }
+    },
+    {
+      name: 'list_calendar_events',
+      description: 'Lista eventos del calendario de Google del usuario en un rango de fechas específico.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          timeMin: {
+            type: 'string',
+            description: 'Fecha/hora de inicio en formato ISO (default: ahora)'
+          },
+          timeMax: {
+            type: 'string',
+            description: 'Fecha/hora de fin en formato ISO (default: +7 días)'
+          },
+          maxResults: {
+            type: 'number',
+            description: 'Número máximo de eventos (default: 10)'
+          }
+        },
+        required: []
+      }
+    },
+    {
+      name: 'search_calendar_events',
+      description: 'Busca eventos específicos en el calendario por término de búsqueda.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'Término de búsqueda para eventos'
+          },
+          timeMin: {
+            type: 'string',
+            description: 'Fecha/hora de inicio (default: ahora)'
+          },
+          timeMax: {
+            type: 'string',
+            description: 'Fecha/hora de fin (default: +30 días)'
+          }
+        },
+        required: ['query']
+      }
+    },
+    {
+      name: 'create_calendar_event',
+      description: 'Crea un nuevo evento en Google Calendar. Requiere al menos summary, start y end.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          event: {
+            type: 'object',
+            description: 'Datos del evento a crear (summary, description, start, end, location, attendees)',
+            properties: {
+              summary: { type: 'string', description: 'Título del evento' },
+              description: { type: 'string', description: 'Descripción del evento' },
+              start: {
+                type: 'object',
+                properties: {
+                  dateTime: { type: 'string', description: 'Fecha/hora inicio ISO' },
+                  timeZone: { type: 'string', description: 'Zona horaria' }
+                }
+              },
+              end: {
+                type: 'object',
+                properties: {
+                  dateTime: { type: 'string', description: 'Fecha/hora fin ISO' },
+                  timeZone: { type: 'string', description: 'Zona horaria' }
+                }
+              },
+              location: { type: 'string', description: 'Ubicación del evento' }
+            }
+          }
+        },
+        required: ['event']
       }
     }
-    
-    return null;
-  };
+  ];
+
+  // ============================================
+  // ENVIAR MENSAJE CON SOPORTE DE HERRAMIENTAS
+  // ============================================
 
   const sendMessage = async () => {
     if (!input.trim() || isLoading) return;
 
     const userMessage = { role: 'user', content: input };
-    const userInput = input;
     setMessages(prev => [...prev, userMessage]);
     setInput('');
     setIsLoading(true);
+    setToolCalls([]);
 
     try {
-      const intent = detectIntent(userInput);
-      let contextInfo = '';
+      let conversationMessages = [...messages, userMessage];
+      let continueLoop = true;
+      let iterationCount = 0;
+      const maxIterations = 5;
 
-      // Si tiene permisos de Drive/Calendar y detectamos intención
-      if (accessToken) {
-        if (intent === 'search_drive') {
-          const query = extractSearchQuery(userInput);
-          if (query) {
-            const files = await searchDrive(query);
-            if (files === null) {
-              contextInfo = `\n\n[INFORMACIÓN]\nNo pude acceder a Google Drive en este momento. Por favor, intenta recargar la página e iniciar sesión de nuevo.\n[FIN DE INFORMACIÓN]`;
-            } else if (files.length > 0) {
-              contextInfo = `\n\n[INFORMACIÓN DE GOOGLE DRIVE]\nEncontré ${files.length} archivos relacionados:\n${files.map(f => `- ${f.name} (${f.mimeType}) - ${f.webViewLink}`).join('\n')}\n[FIN DE INFORMACIÓN]`;
-            } else {
-              contextInfo = `\n\n[INFORMACIÓN DE GOOGLE DRIVE]\nNo encontré archivos con "${query}" en Google Drive.\n[FIN DE INFORMACIÓN]`;
-            }
-          }
-        } else if (intent === 'check_calendar') {
-          const events = await getCalendarEvents();
-          if (events === null) {
-            contextInfo = `\n\n[INFORMACIÓN]\nNo pude acceder a Google Calendar en este momento. Por favor, intenta recargar la página e iniciar sesión de nuevo.\n[FIN DE INFORMACIÓN]`;
-          } else if (events.length > 0) {
-            contextInfo = `\n\n[INFORMACIÓN DE GOOGLE CALENDAR]\nEventos de hoy:\n${events.map(e => {
-              const start = e.start.dateTime || e.start.date;
-              const summary = e.summary || 'Sin título';
-              return `- ${start}: ${summary}`;
-            }).join('\n')}\n[FIN DE INFORMACIÓN]`;
-          } else {
-            contextInfo = `\n\n[INFORMACIÓN DE GOOGLE CALENDAR]\nNo tienes eventos programados para hoy.\n[FIN DE INFORMACIÓN]`;
-          }
-        }
-      }
+      while (continueLoop && iterationCount < maxIterations) {
+        iterationCount++;
 
-      // Llamar a la API con contexto adicional
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          messages: [...messages, userMessage].map(msg => ({
+        // Preparar el cuerpo de la solicitud
+        const requestBody = {
+          messages: conversationMessages.map(msg => ({
             role: msg.role,
             content: msg.content
           })),
-          systemPrompt: assistant.systemPrompt + (contextInfo ? `\n\nContexto adicional del usuario:${contextInfo}\n\nUsa esta información real para responder al usuario de forma específica y útil.` : '')
-        })
-      });
+          systemPrompt: assistant.systemPrompt + (accessToken ? 
+            '\n\nTienes acceso a las siguientes herramientas de Google:\n' +
+            '- search_drive: Buscar archivos en Drive\n' +
+            '- list_recent_files: Listar archivos recientes\n' +
+            '- list_calendar_events: Listar eventos del calendario\n' +
+            '- search_calendar_events: Buscar eventos específicos\n' +
+            '- create_calendar_event: Crear nuevos eventos\n\n' +
+            'Usa estas herramientas cuando el usuario solicite información de su Drive o Calendar.' : 
+            '\n\nNOTA: El usuario aún no ha otorgado permisos para acceder a Drive y Calendar.'
+          )
+        };
 
-      if (!response.ok) {
-        let errorMessage = 'Error al enviar mensaje';
-        try {
-          const errorData = await response.json();
-          errorMessage = errorData.error || errorMessage;
-        } catch (e) {
-          const errorText = await response.text();
-          console.error('Error response:', errorText);
-          errorMessage = `Error ${response.status}: ${errorText || 'Error del servidor'}`;
+        // Solo incluir herramientas si hay token de acceso
+        if (accessToken) {
+          requestBody.tools = tools;
         }
-        throw new Error(errorMessage);
+
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody)
+        });
+
+        if (!response.ok) {
+          let errorMessage = 'Error al enviar mensaje';
+          try {
+            const errorData = await response.json();
+            errorMessage = errorData.error || errorMessage;
+          } catch (e) {
+            const errorText = await response.text();
+            console.error('Error response:', errorText);
+            errorMessage = `Error ${response.status}: ${errorText || 'Error del servidor'}`;
+          }
+          throw new Error(errorMessage);
+        }
+
+        const data = await response.json();
+        console.log('📨 Respuesta de Claude:', data);
+
+        // Verificar si Claude quiere usar herramientas
+        if (data.stop_reason === 'tool_use') {
+          console.log('🔧 Claude solicita usar herramientas');
+          
+          // Agregar respuesta de Claude (con tool_use)
+          conversationMessages.push({
+            role: 'assistant',
+            content: data.content
+          });
+
+          // Ejecutar todas las herramientas solicitadas
+          const toolResults = [];
+          for (const contentBlock of data.content) {
+            if (contentBlock.type === 'tool_use') {
+              console.log(`🛠️ Ejecutando: ${contentBlock.name}`);
+              setToolCalls(prev => [...prev, {
+                name: contentBlock.name,
+                input: contentBlock.input
+              }]);
+
+              const result = await handleToolCall(contentBlock.name, contentBlock.input);
+              
+              toolResults.push({
+                type: 'tool_result',
+                tool_use_id: contentBlock.id,
+                content: JSON.stringify(result)
+              });
+            }
+          }
+
+          // Agregar resultados de herramientas a la conversación
+          conversationMessages.push({
+            role: 'user',
+            content: toolResults
+          });
+
+          // Continuar el loop para obtener la respuesta final de Claude
+          continueLoop = true;
+        } else {
+          // Respuesta final de Claude
+          const assistantMessage = {
+            role: 'assistant',
+            content: data.content[0].text
+          };
+
+          setMessages(prev => [...prev, assistantMessage]);
+          continueLoop = false;
+        }
       }
 
-      const data = await response.json();
-      
-      const assistantMessage = {
-        role: 'assistant',
-        content: data.content[0].text
-      };
+      if (iterationCount >= maxIterations) {
+        console.warn('⚠️ Se alcanzó el límite de iteraciones');
+      }
 
-      setMessages(prev => [...prev, assistantMessage]);
     } catch (error) {
-      console.error('Error:', error);
+      console.error('❌ Error:', error);
       setMessages(prev => [
         ...prev,
         {
           role: 'assistant',
-          content: 'Lo siento, hubo un error al procesar tu mensaje. Por favor intenta de nuevo.'
+          content: `Lo siento, hubo un error: ${error.message}. Por favor intenta de nuevo.`
         }
       ]);
     } finally {
       setIsLoading(false);
+      setToolCalls([]);
     }
   };
 
@@ -286,8 +604,18 @@ function ChatWindow({ assistant, onBack, user, onLogout, accessToken, gapiReady 
             </div>
             <div>
               <h2 className="text-xl font-bold text-white">{assistant.name}</h2>
-              <p className="text-sm text-gray-400">
-                {accessToken ? 'Con acceso a Drive y Calendar' : 'Asistente Virtual'}
+              <p className="text-sm text-gray-400 flex items-center gap-2">
+                {accessToken ? (
+                  <>
+                    <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                    Conectado a Drive y Calendar
+                  </>
+                ) : (
+                  <>
+                    <span className="w-2 h-2 bg-gray-500 rounded-full"></span>
+                    Sin permisos de Drive/Calendar
+                  </>
+                )}
               </p>
             </div>
           </div>
@@ -310,27 +638,6 @@ function ChatWindow({ assistant, onBack, user, onLogout, accessToken, gapiReady 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4">
         <div className="max-w-4xl mx-auto space-y-4">
-          {/* Botón de permisos si no están otorgados */}
-          {!permissionsGranted && (
-            <div className="bg-yellow-900/30 border border-yellow-600 rounded-lg p-4 flex items-start gap-3">
-              <div className="text-yellow-500 text-2xl">⚠️</div>
-              <div className="flex-1">
-                <p className="text-yellow-200 font-semibold mb-2">
-                  Permisos necesarios
-                </p>
-                <p className="text-yellow-100 text-sm mb-3">
-                  Para acceder a tu Drive y Calendar, necesito que me autorices. Haz clic en el botón para otorgar permisos.
-                </p>
-                <button
-                  onClick={requestPermissions}
-                  className="bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"
-                >
-                  Otorgar permisos a Drive y Calendar
-                </button>
-              </div>
-            </div>
-          )}
-          
           {messages.map((message, index) => (
             <div
               key={index}
@@ -347,7 +654,32 @@ function ChatWindow({ assistant, onBack, user, onLogout, accessToken, gapiReady 
               </div>
             </div>
           ))}
-          {isLoading && (
+          
+          {/* Indicador de herramientas en uso */}
+          {toolCalls.length > 0 && (
+            <div className="flex justify-start">
+              <div className="bg-purple-900/50 border border-purple-600 rounded-2xl p-4 max-w-[80%]">
+                <div className="flex items-center gap-2 mb-2">
+                  <Loader2 className="w-4 h-4 animate-spin text-purple-400" />
+                  <span className="text-purple-200 font-medium text-sm">Usando herramientas...</span>
+                </div>
+                <div className="space-y-1">
+                  {toolCalls.map((tool, i) => (
+                    <div key={i} className="flex items-center gap-2 text-xs text-purple-300">
+                      {tool.name === 'search_drive' || tool.name === 'list_recent_files' ? (
+                        <FileText className="w-3 h-3" />
+                      ) : (
+                        <Calendar className="w-3 h-3" />
+                      )}
+                      <span>{tool.name}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+          
+          {isLoading && toolCalls.length === 0 && (
             <div className="flex justify-start">
               <div className="bg-gray-700 rounded-2xl p-4">
                 <div className="flex gap-2">

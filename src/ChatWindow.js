@@ -261,8 +261,11 @@ function ChatWindow({ assistant, onBack, user, onLogout, accessToken, gapiReady 
     try {
       console.log('📅 Listando eventos del calendario...');
       
+      // Asegurar formato ISO completo con zona horaria
       const startTime = timeMin || new Date().toISOString();
       const endTime = timeMax || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+      
+      console.log('Rango de fechas:', { startTime, endTime });
       
       const response = await fetch(
         `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(startTime)}&timeMax=${encodeURIComponent(endTime)}&maxResults=${maxResults}&singleEvents=true&orderBy=startTime`,
@@ -274,6 +277,8 @@ function ChatWindow({ assistant, onBack, user, onLogout, accessToken, gapiReady 
       );
 
       if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Calendar API error response:', errorText);
         throw new Error(`Calendar API error: ${response.status}`);
       }
 
@@ -589,10 +594,11 @@ function ChatWindow({ assistant, onBack, user, onLogout, accessToken, gapiReady 
             '- search_contacts: Buscar contactos por NOMBRE o EMAIL (usa esto cuando el usuario mencione un nombre de persona)\n' +
             '- list_contacts: Listar contactos recientes del usuario\n\n' +
             '**REGLAS IMPORTANTES:**\n' +
-            '1. Si el usuario menciona un NOMBRE DE PERSONA (ej: "Elsa", "Juan Pérez"), SIEMPRE usa search_contacts primero para obtener su email.\n' +
+            '1. Si el usuario menciona un NOMBRE DE PERSONA (ej: "Elsa", "Juan Pérez", "Aranza Ramos"), SIEMPRE usa search_contacts primero para obtener su email.\n' +
             '2. Al crear eventos con participantes, PRIMERO busca los contactos para obtener emails correctos, LUEGO crea el evento.\n' +
             '3. search_drive es SOLO para buscar ARCHIVOS/DOCUMENTOS, NO para buscar personas.\n' +
-            '4. Si necesitas un email y no lo tienes, pregunta al usuario o busca en contactos.\n\n' +
+            '4. Si necesitas un email y no lo tienes, pregunta al usuario o busca en contactos.\n' +
+            '5. SIEMPRE tienes acceso a search_contacts y list_contacts cuando el usuario está autenticado.\n\n' +
             'Ejemplo de flujo correcto:\n' +
             'Usuario: "Crea una reunión con Juan"\n' +
             '1. Ejecutar: search_contacts con query="Juan" para obtener su email\n' +
@@ -604,6 +610,7 @@ function ChatWindow({ assistant, onBack, user, onLogout, accessToken, gapiReady 
         // Solo incluir herramientas si hay token de acceso
         if (accessToken) {
           requestBody.tools = tools;
+          console.log('🔧 Enviando herramientas al backend:', tools.map(t => t.name).join(', '));
         }
 
         const response = await fetch('/api/chat', {

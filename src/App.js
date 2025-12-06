@@ -138,10 +138,15 @@ function App() {
           await window.gapi.client.load('calendar', 'v3');
           console.log('✅ Google Calendar API cargada');
           
+          // Nota: People API (Contacts) se usa directamente con fetch y access token
+          // No requiere carga con gapi.client.load()
+          console.log('✅ People API (Contacts) disponible vía REST API');
+          
           // Verificar que las APIs estén disponibles
           console.log('📊 Estado de APIs:');
           console.log('  - Calendar API:', !!window.gapi.client.calendar ? '✓ Disponible' : '✗ No disponible');
           console.log('  - Drive API:', !!window.gapi.client.drive ? '✓ Disponible' : '✗ No disponible');
+          console.log('  - People API (Contacts): ✓ Disponible vía REST');
           
         } catch (error) {
           console.error('❌ Error cargando APIs de Google:', error);

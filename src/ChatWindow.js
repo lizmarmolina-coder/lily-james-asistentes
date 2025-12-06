@@ -577,15 +577,26 @@ function ChatWindow({ assistant, onBack, user, onLogout, accessToken, gapiReady 
             content: msg.content
           })),
           systemPrompt: assistant.systemPrompt + (accessToken ? 
-            '\n\nTienes acceso a las siguientes herramientas de Google:\n' +
-            '- search_drive: Buscar archivos en Drive\n' +
-            '- list_recent_files: Listar archivos recientes\n' +
-            '- list_calendar_events: Listar eventos del calendario\n' +
-            '- search_calendar_events: Buscar eventos específicos\n' +
-            '- create_calendar_event: Crear nuevos eventos\n' +
-            '- search_contacts: Buscar contactos por nombre/email\n' +
-            '- list_contacts: Listar contactos recientes\n\n' +
-            'Usa estas herramientas cuando el usuario solicite información de su Drive, Calendar o Contactos. Para agregar participantes a eventos, primero busca el contacto para obtener su email correcto.' : 
+            '\n\n**HERRAMIENTAS DISPONIBLES:**\n' +
+            '**Google Drive:**\n' +
+            '- search_drive: Buscar archivos/documentos por nombre o contenido\n' +
+            '- list_recent_files: Listar archivos modificados recientemente\n\n' +
+            '**Google Calendar:**\n' +
+            '- list_calendar_events: Listar eventos en un rango de fechas\n' +
+            '- search_calendar_events: Buscar eventos específicos por texto\n' +
+            '- create_calendar_event: Crear nuevos eventos (puede incluir attendees con emails)\n\n' +
+            '**Google Contacts:**\n' +
+            '- search_contacts: Buscar contactos por NOMBRE o EMAIL (usa esto cuando el usuario mencione un nombre de persona)\n' +
+            '- list_contacts: Listar contactos recientes del usuario\n\n' +
+            '**REGLAS IMPORTANTES:**\n' +
+            '1. Si el usuario menciona un NOMBRE DE PERSONA (ej: "Elsa", "Juan Pérez"), SIEMPRE usa search_contacts primero para obtener su email.\n' +
+            '2. Al crear eventos con participantes, PRIMERO busca los contactos para obtener emails correctos, LUEGO crea el evento.\n' +
+            '3. search_drive es SOLO para buscar ARCHIVOS/DOCUMENTOS, NO para buscar personas.\n' +
+            '4. Si necesitas un email y no lo tienes, pregunta al usuario o busca en contactos.\n\n' +
+            'Ejemplo de flujo correcto:\n' +
+            'Usuario: "Crea una reunión con Juan"\n' +
+            '1. Ejecutar: search_contacts con query="Juan" para obtener su email\n' +
+            '2. Ejecutar: create_calendar_event con el email encontrado en attendees' : 
             '\n\nNOTA: El usuario aún no ha otorgado permisos para acceder a Drive, Calendar y Contactos.'
           )
         };
